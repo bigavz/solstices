@@ -2,47 +2,65 @@ __author__ = 'avi'
 
 import urllib2
 from BeautifulSoup import BeautifulSoup
-from datetime import datetime
+import datetime
 import matplotlib.ticker
 import matplotlib.pyplot as plt
 import numpy as np
-import emphem
+import ephem
 
 
-# Input: strings for latitude, month, year
-# Output: BeautifulSoup object
-def get_soup(month="1", year="2013", lat="43"):
+class EST(datetime.tzinfo):
+    #define subclass for converting ephem UTC to EST
+    def utcoffset(self, dt):
+        return datetime.timedelta(hours=-5)
 
-    #'http://www.timeanddate.com/worldclock/astronomy.html?n=43&month=1&year=2013&obj=sun&afl=-11&day=1'
-    target = "http://www.timeanddate.com/worldclock/astronomy.html?n="
-    suffix = '&obj=sun&afl=-11&day=1'
-    soup = BeautifulSoup(urllib2.urlopen(target + lat + '&month=' + str(month) + '&year=' + year + suffix).read())
-    return soup
+    def dst(self, dt):
+        return datetime.timedelta(0)
 
 
-# Input: a BeautifulSoup object
-# Output: a dict with date as key and tuple sunrise/sunset time as value
-def parse_soup(soup):
+class UTC(datetime.tzinfo):
+    #define subclass to later instantiate ephem UTC as ephem does not provide tzinfo
+    def utcoffset(self, dt):
+        return datetime.timedelta(hours=0)
+
+    def dst(self, dt):
+        return datetime.timedelta(0)
+
+
+# Input: desired lat and lon coordinates (as strings??)
+# Output: a dict with date as key and tuple sunrise/sunset time as value with tzinfo
+def get_sundata(lat="42", lon="-71"):
+    utc = UTC()
+    est = EST()
     sundata = {}
-    for row in soup('table', {'class': 'spad'})[0].tbody('tr'):
-        tds = row('td')
-        # tds[0] is date (Mon DD, YYYY)
-        # tds[1] is sunrise (H:MM AM)
-        # tds[2] is sunset (H:MM PM)
-        #print tds[0].string, "_", tds[1].string, "_", tds[2].string
-        # will print date and sunrise as Jan 31, 2013 6:59 AM 4:57 AM or (tds[0]+tds[1])[-3] = %m %d, %Y %H:%M
-        date = convert_to_datetime(tds[0].string + ' ' + tds[1].string).date()
-        print(date)
-        sunrise = convert_to_datetime(tds[0].string + ' ' + tds[1].string).time()
-        sunset = convert_to_datetime(tds[0].string + ' ' + tds[2].string).time()
-        sundata[date] = (sunrise, sunset)
+    obs = ephem.Observer()
+    obs.lat = '42'
+    obs.lon = '-71'
+
+
+    start_date = datetime.datetime(2013, 1, 1)
+    end_date = datetime.datetime(2013, 12, 31)
+    deltat = datetime.timedelta(days=1)
+
+    sun = ephem.Sun()
+
+    date = start_date
+    while date < end_date:
+        date += deltat
+        obs.date = date
+        rise_time = obs.next_rising(sun).datetime()
+        set_time = obs.next_setting(sun).datetime()
+        rise_time = rise_time.replace(tzinfo=utc)
+        set_time = set_time.replace(tzinfo=utc)
+
+        sundata[date] = (rise_time.astimezone(est), set_time.astimezone(est))
     return sundata
 
 
 # Input: a date string from the Soup (Mon DD, YYY H:MM AM)
 # Output: a datetime string (YYYY-MM-DD HH:MM:SS)
 def convert_to_datetime(soupy_date):
-    return datetime.strptime(soupy_date[:-3], "%b %d, %Y %H:%M")
+    return datetime.datetime.strptime(soupy_date[:-3], "%b %d, %Y %H:%M")
 
 
 # Input: an integer, minutes
@@ -59,14 +77,19 @@ def m2hm(x, i):
 def dt2m(dt):
     return (dt.hour*60) + dt.minute
 
+#return graphable values for solstice times
+def soldate(stringdate):
+    return datetime.datetime.strptime(stringdate, "%b %d %Y")
+
+
+def soltime(stringtime):
+    return dt2m(datetime.datetime.strptime(stringtime, "%H:%M %p"))
+
 
 def main():
     sundata = {}
-    month = 3
-    while month < 13:
-        sundata.update(parse_soup(get_soup(month)))
-        month+=1
-
+    #one could prompt for location data too
+    sundata = get_sundata()
 
     # separate the data into individual arrays to graph.
     # convert to relevant format (date only, integer only).
@@ -80,6 +103,11 @@ def main():
     ax = fig.add_subplot(111)
     ax.plot_date(dates, sunrise)
     ax.plot_date(dates, sunset)
+    #draw vertical and horizontal lines
+    ax.axvline(x=soldate("Dec 21 2013"))
+    ax.axvline(x=soldate("Jun 21 2013"))
+    ax.axhline(y=soltime("5:04 AM"))
+    ax.axhline(y=soltime("5:11 PM"))
 
     ax.yaxis.set_major_formatter(matplotlib.ticker.FuncFormatter(m2hm))
 
